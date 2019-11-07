@@ -16,6 +16,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * @Author: 98050
@@ -35,28 +40,31 @@ public class GoodsServiceImpl implements GoodsService {
     private CategoryClient categoryClient;
 
     @Override
-    public Map<String, Object> loadModel(Long spuId) {
+    public Map<String, Object> loadModel(Long spuId) throws InterruptedException, ExecutionException {
 
-        //查询商品信息
-        SpuBo spuBo = this.goodsClient.queryGoodsById(spuId);
+        final CountDownLatch countDownLatch = new CountDownLatch(2);
+        ExecutorService executorService = Executors.newFixedThreadPool(3);
 
-        //查询商品详情
+        SpuBo spuBo = executorService.submit(() -> {
+            countDownLatch.countDown();
+            return this.goodsClient.queryGoodsById(spuId);
+        }).get();
+
+        Brand brand = executorService.submit(() -> {
+            countDownLatch.countDown();
+            return this.brandClient.queryBrandByIds(Collections.singletonList(spuBo.getBrandId())).get(0);
+        }).get();
+
+        countDownLatch.await();
+
         SpuDetail spuDetail = spuBo.getSpuDetail();
-
-        //查询skus
         List<Sku> skuList = spuBo.getSkus();
-
-        //查询分类信息
         List<Long> ids = new ArrayList<>();
         ids.add(spuBo.getCid1());
         ids.add(spuBo.getCid2());
         ids.add(spuBo.getCid3());
-        List<Category> categoryList = this.categoryClient.queryCategoryByIds(ids).getBody();
 
-        //查询品牌信息
-        Brand brand = this.brandClient.queryBrandByIds(Collections.singletonList(spuBo.getBrandId())).get(0);
-
-
+        List<Category> categoryList = executorService.submit(() -> this.categoryClient.queryCategoryByIds(ids).getBody()).get();
         /**
          * 对于规格属性的处理需要注意以下几点：
          *      1. 所有规格都保存为id和name形式
